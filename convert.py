@@ -1,68 +1,90 @@
 #!/usr/bin/env python3
 
-import sys, os, re, subprocess
+import sys, os, re, subprocess, argparse
 
 def fatal(*args):
     print(*args, file=sys.stderr)
     sys.exit(1)
 
-if len(sys.argv) < 2:
-    fatal('usage:', sys.argv[0], 'input [streams ...] ... [output]')
+parser = argparse.ArgumentParser()
+parser.add_argument('-o', '--output', type=str, help='output file')
+parser.add_argument('-n', '--dry-run', action='store_true', help='print ffmpeg command and exit')
+parser.add_argument('input', nargs='+', help=' input [streams ...] ... [output]')
+args = parser.parse_args()
 
-if len(sys.argv) == 2:
-    process = subprocess.Popen(
-        [ 'ffmpeg', '-i', sys.argv[-1] ],
+re_file = re.compile(r'.+\.[^.]+$')
+def is_file(path):
+    return re_file.match(path) and os.path.isfile(path)
+
+if not is_file(args.input[0]):
+    fatal('first positional argument must be a valid file name')
+
+if len(args.input) == 1:
+    for line in subprocess.Popen(
+        [ 'ffmpeg', '-i', args.input[0] ],
         stderr = subprocess.PIPE
-    )
-    for line in process.stderr:
+    ).stderr:
         if line.startswith(b'  Stream #'):
             print(line.decode().strip())
     sys.exit()
 
-if (set(sys.argv[-1]) & set('^%:*?<>|"\'')) or not re.match(r'.+\.[^.]+$', sys.argv[-1]):
-    fatal('last argument must be an output file name')
+if args.output is None:
+    fatal('must specify an output file: -o/--output')
 
-re_stream = re.compile(r'^([0-9]+|[vas](?::[0-9]+)?)(.*)')
-re_volume = re.compile(r'\*([0-9]+(?:\.[0-9]+))')
-re_format = re.compile(r'\[([^\[\]]+)\]')
-re_lang   = re.compile(r'\(([a-z]{3})\)')
+re_stream = re.compile(r'^(\d+|[vas](?::\d+)?)(.*)')
+re_volume = re.compile(r'^\*(\d+(?:\.\d*)?)(.*)')
+re_format = re.compile(r'\[(.+?)\]')
+re_lang   = re.compile(r'^([a-z]{3}):(\d+|[vas](?::\d+)?)$')
 
 cmd = [ 'ffmpeg' ]
 
 i = -1
 o = -1
 a = 0
-for arg in sys.argv[1:-1]:
-    if os.path.isfile(arg):
+for arg in args.input:
+    if is_file(arg):
         i += 1
         cmd += [ '-i', arg ]
-    elif i < 0:
-        fatal(f'{arg} is not a file')
     else:
-        m = re_stream.match(arg)
-        if m:
+        if m := re_stream.match(arg):
             o += 1
+            s = f'{i}:{m[1]}'
+            arg = m[2].lstrip()
 
-            if mv := re_volume.search(m[2]):
+            fmt = [ f'-c:{o}' ]
+            arg = re_format.split(arg)
+            if len(arg) > 1:
+                for xs in arg[1::2]:
+                    for x in xs.split():
+                        fmt.append(x)
+                arg = ''.join(arg[::2])
+            else:
+                fmt.append('copy')
+                arg = arg[0]
+            arg = arg.lstrip()
+
+            if mv := re_volume.match(arg):
                 a += 1
                 cmd += [
-                    '-filter_complex', f'[{i}:{m[1]}]volume={mv[1]}[a{a}]',
+                    '-filter_complex', f'[{s}]volume={mv[1]}[a{a}]',
                     '-map', f'[a{a}]'
                 ]
+                arg = mv[2].lstrip()
             else:
-                cmd += [ '-map', f'{i}:{m[1]}' ]
+                cmd += [ '-map', s ]
 
-            if mf := re_format.search(m[2]):
-                cmd += [ f'-c:{o}', *mf[1].split() ]
-            else:
-                cmd += [ f'-c:{o}', 'copy' ]
+            cmd += fmt
 
-            # TODO: language
+        elif m := re_lang.match(arg):
+            cmd += [ f'-metadata:s:{m[2]}', f'language={m[1]}' ]
 
         else:
-            fatal(f'{arg} is not a valid stream argument')
+            fatal(f'{arg} is not a valid argument')
 
-cmd.append(sys.argv[-1])
+cmd.append(args.output)
 
-print(cmd)
-subprocess.run(cmd)
+print(*cmd)
+
+if not args.dry_run:
+    print()
+    subprocess.run(cmd)
