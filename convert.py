@@ -31,6 +31,11 @@ if len(args.input) == 1:
 if args.output is None:
     fatal('must specify an output file: -o/--output')
 
+if os.path.isdir(args.output):
+    args.output = os.path.join(args.output, os.path.basename(args.input[0]))
+
+output_exists = os.path.isfile(args.output)
+
 re_stream = re.compile(r'^(\d+|[vas](?::\d+)?)(.*)')
 re_volume = re.compile(r'\*(\d+(?:\.\d*)?)')
 re_lang   = re.compile(r'^([a-z]{3}):(\d+|[vas](?::\d+)?)$')
@@ -42,8 +47,12 @@ o = -1
 a = 0
 for arg in args.input:
     if is_file(arg):
+        if output_exists and os.path.samefile(arg, args.output):
+            fatal('output must not overwrite any input files')
+
         i += 1
         cmd += [ '-i', arg ]
+
     else:
         if m := re_stream.match(arg):
             o += 1
