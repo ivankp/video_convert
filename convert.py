@@ -9,7 +9,7 @@ def fatal(*args):
 parser = argparse.ArgumentParser()
 parser.add_argument('-o', '--output', type=str, help='output file')
 parser.add_argument('-n', '--dry-run', action='store_true', help='print ffmpeg command and exit')
-parser.add_argument('input', nargs='+', help=' input [streams ...] ... [output]')
+parser.add_argument('input', nargs='+', help=' input [streams ...] ... [lang ...]')
 args = parser.parse_args()
 
 re_file = re.compile(r'.+\.[^.]+$')
@@ -32,8 +32,7 @@ if args.output is None:
     fatal('must specify an output file: -o/--output')
 
 re_stream = re.compile(r'^(\d+|[vas](?::\d+)?)(.*)')
-re_volume = re.compile(r'^\*(\d+(?:\.\d*)?)(.*)')
-re_format = re.compile(r'\[(.+?)\]')
+re_volume = re.compile(r'\*(\d+(?:\.\d*)?)')
 re_lang   = re.compile(r'^([a-z]{3}):(\d+|[vas](?::\d+)?)$')
 
 cmd = [ 'ffmpeg' ]
@@ -49,31 +48,26 @@ for arg in args.input:
         if m := re_stream.match(arg):
             o += 1
             s = f'{i}:{m[1]}'
-            arg = m[2].lstrip()
+            arg = m[2].strip()
 
-            fmt = [ f'-c:{o}' ]
-            arg = re_format.split(arg)
+            arg = re_volume.split(arg)
             if len(arg) > 1:
-                for xs in arg[1::2]:
-                    for x in xs.split():
-                        fmt.append(x)
-                arg = ''.join(arg[::2])
-            else:
-                fmt.append('copy')
-                arg = arg[0]
-            arg = arg.lstrip()
-
-            if mv := re_volume.match(arg):
                 a += 1
                 cmd += [
-                    '-filter_complex', f'[{s}]volume={mv[1]}[a{a}]',
+                    '-filter_complex', f'[{s}]volume={arg[-2]}[a{a}]',
                     '-map', f'[a{a}]'
                 ]
-                arg = mv[2].lstrip()
+                arg = ''.join(arg[::2])
             else:
                 cmd += [ '-map', s ]
+                arg = arg[0]
 
-            cmd += fmt
+            cmd.append(f'-c:{o}')
+            if arg:
+                for x in arg.split():
+                    cmd.append(x)
+            else:
+                cmd.append('copy')
 
         elif m := re_lang.match(arg):
             cmd += [ f'-metadata:s:{m[2]}', f'language={m[1]}' ]
