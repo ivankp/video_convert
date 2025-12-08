@@ -8,6 +8,7 @@ def fatal(*args):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-o', '--output', type=str, help='output file')
+parser.add_argument('-a', '--attrs', nargs='*', help='output stream attributes')
 parser.add_argument('-n', '--dry-run', action='store_true', help='print ffmpeg command and exit')
 parser.add_argument('input', nargs='+', help=' input [streams ...] ... [lang ...]')
 args = parser.parse_args()
@@ -36,9 +37,8 @@ if os.path.isdir(args.output):
 
 output_exists = os.path.isfile(args.output)
 
-re_stream = re.compile(r'^(\d+|[vas](?::\d+)?)(.*)')
+re_stream = re.compile(r'^(?:\d+|[vas](?::\d+)?)')
 re_volume = re.compile(r'\*(\d+(?:\.\d*)?)')
-re_lang   = re.compile(r'^([a-z]{3}):(\d+|[vas](?::\d+)?)$')
 
 cmd = [ 'ffmpeg' ]
 
@@ -53,36 +53,53 @@ for arg in args.input:
         i += 1
         cmd += [ '-i', arg ]
 
-    else:
-        if m := re_stream.match(arg):
-            o += 1
-            s = f'{i}:{m[1]}'
-            arg = m[2].strip()
+    elif m := re_stream.match(arg):
+        o += 1
+        s = f'{i}:{m[0]}'
 
-            arg = re_volume.split(arg)
-            if len(arg) > 1:
-                a += 1
-                cmd += [
-                    '-filter_complex', f'[{s}]volume={arg[-2]}[a{a}]',
-                    '-map', f'[a{a}]'
-                ]
-                arg = ''.join(arg[::2])
-            else:
-                cmd += [ '-map', s ]
-                arg = arg[0]
+        arg = re_volume.split(arg[m.end():])
 
-            cmd.append(f'-c:{o}')
-            if arg:
-                for x in arg.split():
-                    cmd.append(x)
-            else:
-                cmd.append('copy')
-
-        elif m := re_lang.match(arg):
-            cmd += [ f'-metadata:s:{m[2]}', f'language={m[1]}' ]
-
+        if len(arg) > 1:
+            a += 1
+            cmd += [
+                '-filter_complex', f'[{s}]volume={arg[-2]}[a{a}]',
+                '-map', f'[a{a}]'
+            ]
+            arg = ''.join(arg[::2])
         else:
-            fatal(f'{arg} is not a valid argument')
+            cmd += [ '-map', s ]
+            arg = arg[0]
+
+        cmd.append(f'-c:{o}')
+        if arg:
+            for x in arg.split():
+                cmd.append(x)
+        else:
+            cmd.append('copy')
+
+    else:
+        fatal(f'{arg} is not a valid argument')
+
+dispositions = {
+    'attached_pic', 'comment', 'default', 'dubbed', 'forced', 'lyrics', 'none',
+    'original'
+}
+re_lang = re.compile(r'^[a-z]{3}$')
+
+if args.attrs is not None:
+    stream = None
+    for arg in args.attrs:
+        if m := re_stream.fullmatch(arg):
+            stream = arg
+        else:
+            if stream is None:
+                fatal('a stream must be specified before attributes')
+            if arg in dispositions:
+                cmd += [ f'-disposition:{stream}', arg ]
+            elif re_lang.fullmatch(arg):
+                cmd += [ f'-metadata:s:{stream}', f'language={arg}' ]
+            else:
+                fatal(f'unexpected stream attribute: {arg}')
 
 cmd.append(args.output)
 
