@@ -91,15 +91,16 @@ if args.attrs is not None:
     for arg in args.attrs:
         if m := re_stream.fullmatch(arg):
             stream = arg
+        elif stream is None:
+            fatal('a stream must be specified before attributes')
+        elif arg in dispositions or (
+            '+' in arg and all(x in dispositions for x in arg.split('+'))
+        ):
+            cmd += [ f'-disposition:{stream}', arg ]
+        elif re_lang.fullmatch(arg):
+            cmd += [ f'-metadata:s:{stream}', f'language={arg}' ]
         else:
-            if stream is None:
-                fatal('a stream must be specified before attributes')
-            if arg in dispositions:
-                cmd += [ f'-disposition:{stream}', arg ]
-            elif re_lang.fullmatch(arg):
-                cmd += [ f'-metadata:s:{stream}', f'language={arg}' ]
-            else:
-                fatal(f'unexpected stream attribute: {arg}')
+            fatal(f'unexpected stream attribute: {arg}')
 
 cmd.append(args.output)
 
